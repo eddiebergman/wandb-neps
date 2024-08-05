@@ -6,7 +6,8 @@ git clone git@github.com:wandb/wandb.git vendored/wandb
 git clone git@github.com:wandb/sweeps.git vendored/sweeps
 
 pip install -e vendored/wandb
-pip install -e vendored/sweeps
+# Don't ask ...
+pip install -e vendored/sweeps --config-settings editable_mode=struct
 ```
 
 #

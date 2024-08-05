@@ -1,17 +1,45 @@
 from __future__ import annotations
 
 import threading
+from typing import Any
 import wandb
-from wandb.util import auto_project_name
 import time
-import os
 from wandb.apis import InternalApi
 from wandb import wandb_sdk
 from wandb.sdk.launch.sweeps import utils as sweep_utils
 from wandb import controller as wandb_controller, wandb_agent
+from wandb.wandb_controller import _WandbController
+import sweeps
+import sweeps.params
 
 
 _api: InternalApi | None = None
+
+ENTITY = "eddiebergmanhs"
+PROJECT = "sweep-test"
+
+
+# NOTE: Signature of a function that implements _custom_search
+def my_next_run(
+    sweep_config: sweeps.SweepConfig,
+    runs: list[sweeps.SweepRun],
+    validate: bool = False,
+    **kwargs: Any,
+) -> sweeps.SweepRun | None:
+    return random_search_next_runs(sweep_config)[0]
+
+
+def random_search_next_runs(sweep_config: sweeps.SweepConfig) -> list[sweeps.SweepRun]:
+    print("MY RANDOM SEARCH")
+    if sweep_config["method"] != "random":
+        raise ValueError("Invalid sweep configuration for random_search_next_run.")
+    params = sweeps.params.HyperParameterSet.from_config(sweep_config["parameters"])
+
+    for param in params:
+        param.value = param.sample()
+
+    run = sweeps.SweepRun(config=params.to_config())
+    return [run]
 
 
 def _get_cling_api(reset=None):
@@ -29,9 +57,10 @@ def _get_cling_api(reset=None):
 
 
 def run_controller(
-    sweep_id: str, stop_event: threading.Event, verbose: bool = True
+    tuner: _WandbController,
+    stop_event: threading.Event,
+    verbose: bool = True,
 ) -> None:
-    tuner = wandb_controller(sweep_id)
     tuner._start_if_not_started()
     while not tuner.done():
         if verbose:
@@ -41,7 +70,10 @@ def run_controller(
 
         if print_status:
             tuner.print_status()
+
+        # This is the entry point
         tuner.step()
+
         if print_actions:
             tuner.print_actions()
         if print_debug:
@@ -55,13 +87,15 @@ def run_controller(
 
 
 def run_agent(sweep_id: str, entity: str, project: str, count: int) -> None:
-    wandb.termlog("Starting wandb agent 🕵️")
+    wandb.termlog("Starting wandb agent")
     wandb_agent.agent(sweep_id, entity=entity, project=project, count=count)
 
 
 def sweep(
     config_yaml_or_sweep_id: str,
     count: int = 1,
+    entity: str = ENTITY,
+    project: str = PROJECT,
     prior_runs: list[str] | None = [],
 ):
     config_yaml = config_yaml_or_sweep_id
@@ -70,68 +104,35 @@ def sweep(
     if not api.is_authenticated:
         raise Exception("Login to W&B to use the sweep feature")
 
-    sweep_obj_id = None
-    action = "Updating" if sweep_obj_id else "Creating"
-    wandb.termlog(f"{action} sweep from: {config_yaml}")
+    wandb.termlog(f"Creating sweep from: {config_yaml}")
     config = sweep_utils.load_sweep_config(config_yaml)
     assert config is not None
     wandb.termlog(f"Loaded config: {config}")
 
     config.setdefault("controller", {})
     config["controller"]["type"] = "local"
+    config["_custom_search"] = my_next_run
 
-    tuner = wandb_controller()
-    err = tuner._validate(config)
-    if err:
-        wandb.termerror(f"Error in sweep file: {err}")
-        return
+    tuner = wandb_controller(sweep_id_or_config=config, entity=entity, project=project)
+    sweep_id = tuner.sweep_id
 
-    env = os.environ
-    entity = env.get("WANDB_ENTITY") or config.get("entity") or api.settings("entity")
-    project = (
-        env.get("WANDB_PROJECT")
-        or config.get("project")
-        or api.settings("project")
-        or auto_project_name(config.get("program"))
-    )
-
-    sweep_id, warnings = api.upsert_sweep(
-        config,
-        project=project,
-        entity=entity,
-        obj_id=sweep_obj_id,
-        prior_runs=prior_runs,
-    )
-    sweep_utils.handle_sweep_config_violations(warnings)
-
-    # Log nicely formatted sweep information
+    print("-----------")
+    print(sweep_id)
     wandb.termlog(f"sweep with ID: {sweep_id}")
+    print("-----------")
 
+    # DEBUG
     sweep_url = wandb_sdk.wandb_sweep._get_sweep_url(api, sweep_id)
     if sweep_url:
         wandb.termlog(f"View sweep at: {sweep_url}")
 
-    # re-probe entity and project if it was auto-detected by upsert_sweep
-    entity = entity or env.get("WANDB_ENTITY")
-    project = project or env.get("WANDB_PROJECT")
-
-    if entity and project:
-        sweep_path = f"{entity}/{project}/{sweep_id}"
-    elif project:
-        sweep_path = f"{project}/{sweep_id}"
-    else:
-        sweep_path = sweep_id
-
-    if sweep_path.find(" ") >= 0:
-        sweep_path = f"{sweep_path!r}"
-
-    wandb.termlog(f"Run sweep agent with: {sweep_path}")
     wandb.termlog("Starting wandb controller...")
 
     # Create threads
+    print(config)
     stop_controller = threading.Event()
     controller_thread = threading.Thread(
-        target=run_controller, args=(sweep_id, stop_controller, True)
+        target=run_controller, args=(tuner, stop_controller, True)
     )
     agent_thread = threading.Thread(
         target=run_agent, args=(sweep_id, entity, project, count)
@@ -151,9 +152,13 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--sweep", type=str, default="sweep.yaml")
     parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--entity", type=str, default=ENTITY)
+    parser.add_argument("--project", type=str, default=PROJECT)
     args = parser.parse_args()
     sweep(
         config_yaml_or_sweep_id=args.sweep,
         prior_runs=[],
         count=args.count,
+        entity=args.entity,
+        project=args.project,
     )

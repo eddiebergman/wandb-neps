@@ -101,9 +101,6 @@ def parse_searchspace(
 def sweep_run_to_trial(
     run: sweeps.SweepRun, metric_to_optimize: str, minimize: bool
 ) -> Trial:
-    print("========= SWEEP RUN TO TRIAL ============")
-    print(run)
-    print("=========================================")
     state = STATE_MAPPING[run.state]
     if state is None:
         raise NotImplementedError(f"Unknown how to handle run state: {run.state}")
@@ -277,9 +274,7 @@ def custom_step(tuner: _WandbController) -> None:
     if tuner._controller and tuner._controller.get("schedule"):
         return
     else:
-        print("------------ SAMPLING ------------")
         suggestion = tuner.search()
-        print(suggestion)
         tuner.schedule(suggestion)
 
     to_stop = tuner.stopping()
@@ -346,10 +341,7 @@ def sweep(
     tuner.configure_search(my_next_run)  # type: ignore
     sweep_id = tuner.sweep_id
 
-    print("-----------")
-    print(sweep_id)
     wandb.termlog(f"sweep with ID: {sweep_id}")
-    print("-----------")
 
     # DEBUG
     sweep_url = wandb_sdk.wandb_sweep._get_sweep_url(api, sweep_id)

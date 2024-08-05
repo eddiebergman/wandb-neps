@@ -1,58 +1,33 @@
 # Setup
 ```bash
 # Make a venv
+# ...
+
 mkdir -p vendored
 git clone git@github.com:wandb/wandb.git vendored/wandb
 git clone git@github.com:wandb/sweeps.git vendored/sweeps
+git clone git@github.com:automl/neps.git vendored/neps
 
 pip install -e vendored/wandb
 # Don't ask ...
 pip install -e vendored/sweeps --config-settings editable_mode=strict
+
+pip install -e vendored/neps
+
+# If you want a CPU version of torch
+pip uninstall torch torchvision
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
-#
-Create a yaml file with the search space
-```yaml
-# config.yaml
-program: train.py  # <- Note, this is the file you want to run
-method: random
-name: sweep
-metric:
-  goal: maximize
-  name: val_acc
-parameters:
-  batch_size:
-    values: [16,32,64]
-  lr:
-    min: 0.0001
-    max: 0.1
-  epochs:
-    values: [5, 10, 15]
-```
-
-Have a python file with the following at minimum:
-
-```python
-def main():
-    run = wandb.init()
-
-    # Note that we define values from `wandb.config`
-    # instead of  defining hard values
-    lr = wandb.config.lr
-    bs = wandb.config.batch_size
-    epochs = wandb.config.epochs
-
-    # Your code to evaluate here
-    # ...
-
-    wandb.log({"val_acc": 0.5})
-
-if __name__ == "__main__":
-    main()
-```
-
-Start the loop
+## Run
+The following command will spin up a sweep-agent in one thread, wait 2 seconds
+and then spin up an agent (worker agent?) in another thread.
 
 ```bash
-python sweep-starter.py
+python sweep-starter.py [--entity <entity>] [--project <project>] [--count <count>]
+```
+
+For example
+```bash
+python sweep-starter.py [--entity <entity>] [--project <project>] [--count <count>]
 ```

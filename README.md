@@ -40,7 +40,7 @@ python sweep-starter.py \
     --project sweep-test \
     --count 15 \
     --sweeper-refresh-rate 1 \
-    --trainer-epoch-sleep-duration 0.5 \
+    --trainer-epoch-sleep-duration 0.5
 ```
 
 ## With early terminate
@@ -52,11 +52,12 @@ It seems there's quite some delay in:
 By setting the `trainer-epoch-sleep-duration`, this gives more time for this synchronization to occur
 but it makes the entire testing process terminally slow...
 
+The example below sets the count for 50 runs just to get a nice overview...
 ```bash
 python sweep-starter.py \
     --entity eddiebergmanhs \
-    --project sweep-test \
-    --count 15 \
+    --project sweep-test-with-hb \
+    --count 50 \
     --sweeper-refresh-rate 5 \
-    --trainer-epoch-sleep-duration 5 \
+    --trainer-epoch-sleep-duration 5
 ```

@@ -2,7 +2,7 @@
 program: train.py
 controller:
   type: local
-method: random
+method: custom
 name: sweep
 metric:
   goal: maximize

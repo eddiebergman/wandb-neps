@@ -29,5 +29,5 @@ python sweep-starter.py [--entity <entity>] [--project <project>] [--count <coun
 
 For example
 ```bash
-python sweep-starter.py [--entity <entity>] [--project <project>] [--count <count>]
+python sweep-starter.py --entity eddiebergmanhs --project sweep-test --count 15
 ```

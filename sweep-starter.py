@@ -18,6 +18,21 @@ ENTITY = "eddiebergmanhs"
 PROJECT = "sweep-test"
 
 
+def custom_step(tuner: _WandbController) -> None:
+    tuner._step()
+    # only schedule one run at a time (for now)
+    if tuner._controller and tuner._controller.get("schedule"):
+        return
+    else:
+        print("------------ SAMPLING ------------")
+        suggestion = tuner.search()
+        tuner.schedule(suggestion)
+
+    to_stop = tuner.stopping()
+    if len(to_stop) > 0:
+        tuner.stop_runs(to_stop)
+
+
 # NOTE: Signature of a function that implements _custom_search
 def my_next_run(
     sweep_config: sweeps.SweepConfig,
@@ -68,8 +83,7 @@ def run_controller(
         if print_status:
             tuner.print_status()
 
-        # This is the entry point
-        tuner.step()
+        custom_step(tuner)
 
         if print_actions:
             tuner.print_actions()
@@ -80,7 +94,7 @@ def run_controller(
             wandb.termlog("Stopping wandb controller as agent is done...")
             break
 
-        time.sleep(1)
+        time.sleep(2)
 
 
 def run_agent(sweep_id: str, entity: str, project: str, count: int) -> None:
@@ -126,7 +140,6 @@ def sweep(
     wandb.termlog("Starting wandb controller...")
 
     # Create threads
-    print(config)
     stop_controller = threading.Event()
     controller_thread = threading.Thread(
         target=run_controller, args=(tuner, stop_controller, True)
@@ -148,7 +161,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--sweep", type=str, default="sweep.yaml")
-    parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--count", type=int, default=2)
     parser.add_argument("--entity", type=str, default=ENTITY)
     parser.add_argument("--project", type=str, default=PROJECT)
     args = parser.parse_args()

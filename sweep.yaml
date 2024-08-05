@@ -1,5 +1,7 @@
 # config.yaml
 program: train.py
+controller:
+  type: local
 method: random
 name: sweep
 metric:

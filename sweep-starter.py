@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
 import wandb
 import time
 from wandb.apis import InternalApi
@@ -23,8 +22,6 @@ PROJECT = "sweep-test"
 def my_next_run(
     sweep_config: sweeps.SweepConfig,
     runs: list[sweeps.SweepRun],
-    validate: bool = False,
-    **kwargs: Any,
 ) -> sweeps.SweepRun | None:
     return random_search_next_runs(sweep_config)[0]
 
@@ -107,13 +104,13 @@ def sweep(
     wandb.termlog(f"Creating sweep from: {config_yaml}")
     config = sweep_utils.load_sweep_config(config_yaml)
     assert config is not None
-    wandb.termlog(f"Loaded config: {config}")
+    sweep_config = sweeps.SweepConfig(config)
+    wandb.termlog(f"Loaded config: {dict(sweep_config)}")
 
-    config.setdefault("controller", {})
-    config["controller"]["type"] = "local"
-    config["_custom_search"] = my_next_run
-
-    tuner = wandb_controller(sweep_id_or_config=config, entity=entity, project=project)
+    tuner = wandb_controller(
+        sweep_id_or_config=sweep_config, entity=entity, project=project
+    )
+    tuner.configure_search(my_next_run)
     sweep_id = tuner.sweep_id
 
     print("-----------")

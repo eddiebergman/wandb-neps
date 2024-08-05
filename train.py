@@ -28,15 +28,16 @@ def main():
         train_acc, train_loss = train_one_epoch(epoch, lr, bs)
         val_acc, val_loss = evaluate_one_epoch(epoch)
 
-        wandb.log(
-            {
-                "epoch": epoch,
-                "train_acc": train_acc,
-                "train_loss": train_loss,
-                "val_acc": val_acc,
-                "val_loss": val_loss,
-            }
-        )
+        data = {
+            "epoch": epoch,
+            "train_acc": train_acc,
+            "train_loss": train_loss,
+            "val_acc": val_acc,
+            "val_loss": val_loss,
+        }
+
+        print(data)
+        wandb.log(data)
 
 
 # Call the main function.

@@ -1,6 +1,18 @@
+"""
+Higher level todos:
+* Not sure why but sometimes the worker just does not pick up on a sampled config.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 import threading
+from typing import Any
+import numpy as np
+from neps.optimizers.base_optimizer import SampledConfig
+from neps.search_spaces.parameter import Parameter
+from neps.search_spaces.search_space import SearchSpace
+from neps.state.trial import Trial
 import wandb
 import time
 from wandb.apis import InternalApi
@@ -10,6 +22,10 @@ from wandb import controller as wandb_controller, wandb_agent
 from wandb.wandb_controller import _WandbController
 import sweeps
 import sweeps.params
+from neps.optimizers.bayesian_optimization.optimizer import BayesianOptimization
+import neps
+
+from vendored.sweeps.src.sweeps.params import HyperParameter
 
 
 _api: InternalApi | None = None
@@ -18,40 +34,227 @@ ENTITY = "eddiebergmanhs"
 PROJECT = "sweep-test"
 
 
-def custom_step(tuner: _WandbController) -> None:
-    tuner._step()
-    # only schedule one run at a time (for now)
-    if tuner._controller and tuner._controller.get("schedule"):
-        return
+STATE_MAPPING: Mapping[sweeps.run.RunState, Trial.State | None] = {
+    sweeps.run.RunState.pending: Trial.State.PENDING,
+    sweeps.run.RunState.running: Trial.State.EVALUATING,
+    sweeps.run.RunState.finished: Trial.State.SUCCESS,
+    sweeps.run.RunState.killed: Trial.State.CRASHED,
+    sweeps.run.RunState.crashed: Trial.State.CRASHED,
+    sweeps.run.RunState.failed: Trial.State.FAILED,
+    # TODO(eddiebergman): I don't know what these mean yet...
+    sweeps.run.RunState.preempted: None,
+    sweeps.run.RunState.preempting: None,
+}
+
+
+def parse_hp(hp: sweeps.params.HyperParameter) -> Parameter:
+    # Python 3.10 match statement would be nice right about now...
+    if hp.type == HyperParameter.CONSTANT:
+        assert hp.value is not None
+        return neps.ConstantParameter(hp.value)
+    if hp.type == HyperParameter.CATEGORICAL:
+        return neps.CategoricalParameter(hp.config["values"])
+    if hp.type == HyperParameter.INT_UNIFORM:
+        return neps.Integer(hp.config["min"], hp.config["max"])
+    if hp.type == HyperParameter.UNIFORM:
+        return neps.Float(hp.config["min"], hp.config["max"])
+    if hp.type == HyperParameter.LOG_UNIFORM_V2:
+        return neps.Float(hp.config["min"], hp.config["max"], log=True)
+
+    if hp.type == HyperParameter.CATEGORICAL_PROB:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.LOG_UNIFORM_V1:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.INV_LOG_UNIFORM_V1:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.INV_LOG_UNIFORM_V2:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_UNIFORM:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_LOG_UNIFORM_V1:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_LOG_UNIFORM_V2:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.NORMAL:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_NORMAL:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.LOG_NORMAL:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_LOG_NORMAL:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.BETA:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+    if hp.type == HyperParameter.Q_BETA:
+        raise NotImplementedError(f"{hp.type}: {hp.config} is not supported yet")
+
+    raise NotImplementedError(f"{hp.type}: {hp.config} is unknown")
+
+
+def parse_searchspace(
+    parameter_dict: dict[str, Any],
+) -> SearchSpace:
+    wandb_hp_set = sweeps.params.HyperParameterSet.from_config(parameter_dict)
+    return SearchSpace(**{hp.name: parse_hp(hp) for hp in wandb_hp_set})
+
+
+def sweep_run_to_trial(
+    run: sweeps.SweepRun, metric_to_optimize: str, minimize: bool
+) -> Trial:
+    print("========= SWEEP RUN TO TRIAL ============")
+    print(run)
+    print("=========================================")
+    state = STATE_MAPPING[run.state]
+    if state is None:
+        raise NotImplementedError(f"Unknown how to handle run state: {run.state}")
+    if run.name is None:
+        raise NotImplementedError(f"Not sure how to handle run without name yet: {run}")
+
+    if not sweeps.run.run_state_is_terminal(run.state):
+        report = None
     else:
-        print("------------ SAMPLING ------------")
-        suggestion = tuner.search()
-        tuner.schedule(suggestion)
+        # This is the only state that can hold recorded metrics I think...
+        if run.summary_metrics is not None:
+            # NOTE(eddiebergman): This is not the last loss value reported but rather the best loss
+            # seen. Perhaps this should be `learning_curve[-1]`?
+            metric = run.metric_extremum(
+                metric_to_optimize, kind="minimize" if minimize else "maximize"
+            )
 
-    to_stop = tuner.stopping()
-    if len(to_stop) > 0:
-        tuner.stop_runs(to_stop)
+            metric_history = run.metric_history(metric_to_optimize)
+            if not minimize:
+                loss = -float(metric)
+                learning_curve = [-float(v) for v in metric_history]
+            else:
+                loss = float(metric)
+                learning_curve = [float(v) for v in metric_history]
+
+            report = Trial.Report(
+                trial_id=run.name,
+                learning_curve=learning_curve,
+                loss=loss,
+                cost=None,  # Not definiable through W&B
+                # -------- Not used by the optimizer for anything meaningful --------
+                extra={},
+                evaluation_duration=-1,
+                err=None,
+                tb=None,
+                reported_as=(
+                    "success"
+                    if state == Trial.State.SUCCESS
+                    else "failed"
+                    if state == Trial.State.FAILED
+                    else "crashed"
+                ),
+            )
+        else:
+            report = Trial.Report(
+                trial_id=run.name,
+                learning_curve=None,
+                loss=None,
+                cost=None,  # Not definiable through W&B
+                # -------- Not used by the optimizer for anything meaningful --------
+                extra={},
+                evaluation_duration=-1,
+                err=None,
+                tb=None,
+                reported_as="crashed",  # TODO(eddiebergman): Only reason to have no metrics is crash?
+            )
+
+    return Trial(
+        config={
+            k: d["value"]
+            for k, d in run.config.items()
+            # NOTE(eddiebergman): I have no idea how this get's into the `run.config` but it's there.
+            # Seems to be kind telemetry
+            if k != "_wandb"
+        },
+        state=state,
+        report=report,
+        metadata=Trial.MetaData(
+            id=run.name,
+            previous_trial_id=(
+                run.search_info.get("previous_config_id", None)
+                if run.search_info is not None
+                else None
+            ),
+            # ------- Not used by optimizer for anything meaningful -------
+            sampling_worker_id="",  # Not used here
+            time_sampled=-1,  # Not used here
+            location="",  # Not used here
+            previous_trial_location=None,  # Not used here
+        ),
+    )
 
 
-# NOTE: Signature of a function that implements _custom_search
+def sampled_trial_to_sweep_run(sampled_config: SampledConfig) -> sweeps.SweepRun:
+    # For now, we only expect this to be done once sampling...
+
+    # NOTE(eddiebergman): They serialize values with which means we can only have JSON serializable
+    # primitives
+    def as_native_python_type_for_serialization(
+        v: int | float | np.number,
+    ) -> int | float:
+        if isinstance(v, np.number):
+            return v.item()
+        return v
+
+    return sweeps.SweepRun(
+        # NOTE(eddiebergman): Found a comment in `sweeps/params.py`
+        #
+        # > Because of historical reason the first level of nesting requires "value" key
+        #
+        config={
+            k: {"value": as_native_python_type_for_serialization(v)}
+            for k, v in sampled_config.config.items()
+        },
+        name=sampled_config.id,
+        # TODO(eddiebergman): Remove this
+        search_info={"previous_config_id": sampled_config.previous_config_id},
+    )
+
+
 def my_next_run(
     sweep_config: sweeps.SweepConfig,
     runs: list[sweeps.SweepRun],
 ) -> sweeps.SweepRun | None:
-    return random_search_next_runs(sweep_config)[0]
+    metric_def = sweep_config.get("metric", None)
+    assert metric_def is not None
 
+    goal = metric_def.get("goal", None)
+    if goal is None:
+        raise ValueError(f"Metric definition must have a goal. {metric_def}")
 
-def random_search_next_runs(sweep_config: sweeps.SweepConfig) -> list[sweeps.SweepRun]:
-    print("MY RANDOM SEARCH")
-    if sweep_config["method"] != "random":
-        raise ValueError("Invalid sweep configuration for random_search_next_run.")
-    params = sweeps.params.HyperParameterSet.from_config(sweep_config["parameters"])
+    minimize = (
+        True
+        if goal.lower() == "minimize"
+        else False
+        if goal.lower() == "maximize"
+        else None
+    )
+    if minimize is None:
+        raise ValueError(f"Invalid goal in metric definition. {metric_def}")
 
-    for param in params:
-        param.value = param.sample()
+    metric_to_optimize_name = metric_def.get("name", None)
+    if metric_to_optimize_name is None:
+        raise ValueError(f"Metric definition must have a name. {metric_def}")
 
-    run = sweeps.SweepRun(config=params.to_config())
-    return [run]
+    search_space = parse_searchspace(sweep_config["parameters"])
+    opt = BayesianOptimization(pipeline_space=search_space)
+    trials = [
+        sweep_run_to_trial(
+            run,
+            metric_to_optimize=metric_to_optimize_name,
+            minimize=minimize,
+        )
+        for run in runs
+    ]
+    next_suggestion, _ = opt.ask(
+        trials={t.metadata.id: t for t in trials},
+        budget_info=None,
+        optimizer_state={},
+    )
+    return sampled_trial_to_sweep_run(next_suggestion)
 
 
 def _get_cling_api(reset=None):
@@ -66,6 +269,22 @@ def _get_cling_api(reset=None):
         wandb.setup(settings=dict(_cli_only_mode=True))
         _api = InternalApi()
     return _api
+
+
+def custom_step(tuner: _WandbController) -> None:
+    tuner._step()
+    # only schedule one run at a time (for now)
+    if tuner._controller and tuner._controller.get("schedule"):
+        return
+    else:
+        print("------------ SAMPLING ------------")
+        suggestion = tuner.search()
+        print(suggestion)
+        tuner.schedule(suggestion)
+
+    to_stop = tuner.stopping()
+    if len(to_stop) > 0:
+        tuner.stop_runs(to_stop)
 
 
 def run_controller(
@@ -124,7 +343,7 @@ def sweep(
     tuner = wandb_controller(
         sweep_id_or_config=sweep_config, entity=entity, project=project
     )
-    tuner.configure_search(my_next_run)
+    tuner.configure_search(my_next_run)  # type: ignore
     sweep_id = tuner.sweep_id
 
     print("-----------")
@@ -144,6 +363,10 @@ def sweep(
     controller_thread = threading.Thread(
         target=run_controller, args=(tuner, stop_controller, True)
     )
+
+    # Just to give the controller time to boot...
+    time.sleep(2)
+
     agent_thread = threading.Thread(
         target=run_agent, args=(sweep_id, entity, project, count)
     )

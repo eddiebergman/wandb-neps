@@ -26,6 +26,9 @@ from neps.optimizers.bayesian_optimization.optimizer import BayesianOptimization
 import neps
 
 from vendored.sweeps.src.sweeps.params import HyperParameter
+import logging
+
+logging.getLogger("wandb.wandb_agent").setLevel(logging.INFO)
 
 
 _api: InternalApi | None = None
@@ -272,22 +275,28 @@ def custom_step(tuner: _WandbController) -> None:
     tuner._step()
     # only schedule one run at a time (for now)
     if tuner._controller and tuner._controller.get("schedule"):
-        return
+        pass
     else:
         suggestion = tuner.search()
         tuner.schedule(suggestion)
 
     to_stop = tuner.stopping()
     if len(to_stop) > 0:
+        print("==== Stopping!")
         tuner.stop_runs(to_stop)
 
 
 def run_controller(
     tuner: _WandbController,
     stop_event: threading.Event,
+    sweeper_refresh_rate: float,
     verbose: bool = True,
 ) -> None:
     tuner._start_if_not_started()
+    print("======= Sweeper Config ============")
+    print(dict(tuner.sweep_config))
+    print("===================================")
+
     while not tuner.done():
         if verbose:
             print_status = True
@@ -301,14 +310,14 @@ def run_controller(
 
         if print_actions:
             tuner.print_actions()
-        if print_debug:
-            tuner.print_debug()
+        # if print_debug:
+        # tuner.print_debug()
 
         if stop_event.is_set():
             wandb.termlog("Stopping wandb controller as agent is done...")
             break
 
-        time.sleep(2)
+        time.sleep(sweeper_refresh_rate)
 
 
 def run_agent(sweep_id: str, entity: str, project: str, count: int) -> None:
@@ -317,13 +326,16 @@ def run_agent(sweep_id: str, entity: str, project: str, count: int) -> None:
 
 
 def sweep(
-    config_yaml_or_sweep_id: str,
+    config_path: str,
     count: int = 1,
     entity: str = ENTITY,
     project: str = PROJECT,
     prior_runs: list[str] | None = [],
+    include_early_stopping: bool = False,
+    sweeper_refresh_rate: float = 0.5,
+    epoch_sleep_duration: float = 0.5,
 ):
-    config_yaml = config_yaml_or_sweep_id
+    config_yaml = config_path
 
     api = _get_cling_api()
     if not api.is_authenticated:
@@ -332,11 +344,25 @@ def sweep(
     wandb.termlog(f"Creating sweep from: {config_yaml}")
     config = sweep_utils.load_sweep_config(config_yaml)
     assert config is not None
+
+    # Inject in a sleep into the training function to give early-stopping
+    # time to kick-in
+    # This goes in conjunction with sweeper_refresh_rate
+    # TODO(eddiebergman): I'm not sure how to increase the worker poll rate
+    # so we just make the training loop slower with this
+    config["parameters"]["epoch_sleep_duration"] = {
+        "value": epoch_sleep_duration,
+    }
+    if not include_early_stopping:
+        config.pop("early_terminate", None)
+
     sweep_config = sweeps.SweepConfig(config)
     wandb.termlog(f"Loaded config: {dict(sweep_config)}")
 
     tuner = wandb_controller(
-        sweep_id_or_config=sweep_config, entity=entity, project=project
+        sweep_id_or_config=sweep_config,
+        entity=entity,
+        project=project,
     )
     tuner.configure_search(my_next_run)  # type: ignore
     sweep_id = tuner.sweep_id
@@ -353,14 +379,16 @@ def sweep(
     # Create threads
     stop_controller = threading.Event()
     controller_thread = threading.Thread(
-        target=run_controller, args=(tuner, stop_controller, True)
+        target=run_controller,
+        args=(tuner, stop_controller, sweeper_refresh_rate, True),
     )
 
     # Just to give the controller time to boot...
     time.sleep(2)
 
     agent_thread = threading.Thread(
-        target=run_agent, args=(sweep_id, entity, project, count)
+        target=run_agent,
+        args=(sweep_id, entity, project, count),
     )
 
     # Start threads
@@ -379,11 +407,24 @@ if __name__ == "__main__":
     parser.add_argument("--count", type=int, default=2)
     parser.add_argument("--entity", type=str, default=ENTITY)
     parser.add_argument("--project", type=str, default=PROJECT)
+
+    # NOTE(eddiebergman): It seems there's quite some delay in:
+    # 1. The sweep agent getting the most up to date history and issuing a stop command
+    # 2. The worker agent recieving the stop command and cancelling the run.
+    # ----
+    # By setting the trainer-epoch-sleep-duration gives more time for this synchornization to occur
+    # but it makes the entire testing process terminally slow...
+    parser.add_argument("--include-early-stopping", action="store_true")
+    parser.add_argument("--sweeper-refresh-rate", type=float, default=5)
+    parser.add_argument("--trainer-epoch-sleep-duration", type=float, default=5)
     args = parser.parse_args()
     sweep(
-        config_yaml_or_sweep_id=args.sweep,
+        config_path=args.sweep,
         prior_runs=[],
         count=args.count,
         entity=args.entity,
         project=args.project,
+        include_early_stopping=args.include_early_stopping,
+        sweeper_refresh_rate=args.sweeper_refresh_rate,
+        epoch_sleep_duration=args.trainer_epoch_sleep_duration,
     )

@@ -35,8 +35,6 @@ def main():
             "val_acc": val_acc,
             "val_loss": val_loss,
         }
-
-        print(data)
         wandb.log(data)
 
 

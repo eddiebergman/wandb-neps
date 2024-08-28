@@ -5,6 +5,7 @@ mkdir -p vendored
 git clone git@github.com:automl/neps.git vendored/neps
 cd vendored/neps
 git checkout 7aceeaa
+cd ../../
 
 pip install "sweeps==0.2.0" "wandb==0.17.7" ./vendored/neps
 

@@ -3,11 +3,7 @@ import random
 import time
 import numpy as np
 
-BATCH_SIZE_BIASES = {
-    16: 1,
-    32: 2,
-    64: 1,
-}
+BATCH_SIZE_BIASES = {16: 1, 32: 2, 64: 1}
 
 
 def train_one_epoch(epoch, lr, bs):
@@ -20,12 +16,10 @@ def evaluate_one_epoch(epoch, lr, bs):
     # NOTE(eddiebergman): This is a bias such that we bias better accuracy
     # depending on how far the learning_rate is from 0.001 (1e-3)
     # We also do the same based on batch size
-    c = abs(
-        -1 / (1 - (np.log(1e-3) - np.log(lr)))
-    )  # 1 when it matches, otherwise between (0, 1)
-
+    c = abs(-1 / (1 - (np.log(1e-3) - np.log(lr))))  # between (0, 1), 1 when it matches
     m = BATCH_SIZE_BIASES[bs]
 
+    # Linear function w.r.t. epoch + noise, slop dictated by hyperparameters
     acc = 0.1 + ((epoch / 20) + (random.random() / 10)) * c * m
     loss = 0.25 + (1 - ((epoch - 1) / 10 + random.random() / 6))
     return acc, loss

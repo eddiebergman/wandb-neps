@@ -1,5 +1,7 @@
 # Setup
 ```bash
+# Clone this repo
+# cd into it
 # Make a venv
 mkdir -p vendored
 git clone git@github.com:automl/neps.git vendored/neps

@@ -35,6 +35,14 @@ python sweep-starter.py --entity eddiebergmanhs --project sweep-test
 
 ## With early Terminate
 To use W&B existing early termination, use the following command:
+
+> [!WARNING] As the communication between sweep-agent <-> W&B servers <-> worker agent is not instant,
+> we have to introduce quite a bit of sleeping, to allow the worker agent to be terminated mid run.
+> This makes the example much slower. I advise running this in a seperate terminal and dumping the output
+> to a seperate file.
+> You can later search this log for the word "Stopping"
+> to see if it has taken effect.
+
 ```bash
 # Replace with your entity and project
 python sweep-starter.py \

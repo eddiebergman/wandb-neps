@@ -1,4 +1,12 @@
-# Setup
+# NePS Sweeps Example
+Proof of concept for using NePS with W&B sweeps.
+
+The two files used are `sweep-starter.py` which spawns both sweep-agent and evaluating agent
+and `train.py` as the actual training procedure _i.e._ user code.
+
+Please read the `sweep-starter.py` file for more information on implementation details.
+
+## Setup
 ```bash
 # Clone this repo
 # cd into it
@@ -16,27 +24,15 @@ pip uninstall torch torchvision
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
-## Run
-The following command will spin up a sweep-agent in one thread, wait 2 seconds
-and then spin up an agent (worker agent?) in another thread.
+## Run no early-stopping
+The following will run a faily quick demo, with no early stopping enabled.
 
-## No early_terminate
-```bash
-python sweep-starter.py \
-    [--entity <str>] \
-    [--project <str>] \
-    [--count <int>] \
-    [--sweeper-refresh-rate <float>] \
-    [--trainer-epoch-sleep-duration <float>]
-```
-
-For example, you can run the following command which should be sufficient for testing.
 ```bash
 # Replace with your entity and project
 python sweep-starter.py --entity eddiebergmanhs --project sweep-test
 ```
 
-## With early Terminate
+## With early-stopping
 To use W&B existing early termination, use the following command:
 
 > [!WARNING] As the communication between sweep-agent <-> W&B servers <-> worker agent is not instant,
@@ -49,7 +45,7 @@ To use W&B existing early termination, use the following command:
 python sweep-starter.py \
     --entity eddiebergmanhs \
     --project sweep-test \
-    --include-early-terminate \
+    --include-early-stopping \
     --trainer-epoch-sleep-duration 5
 ```
 

@@ -38,10 +38,8 @@ To use W&B existing early termination, use the following command:
 
 > [!WARNING] As the communication between sweep-agent <-> W&B servers <-> worker agent is not instant,
 > we have to introduce quite a bit of sleeping, to allow the worker agent to be terminated mid run.
-> This makes the example much slower. I advise running this in a seperate terminal and dumping the output
-> to a seperate file.
-> You can later search this log for the word "Stopping"
-> to see if it has taken effect.
+> This makes the example much slower, time to get a coffee, fix a bug, reply to an issue or get some food.
+> If any runs are stopped, a `stopping.log` file is created
 
 ```bash
 # Replace with your entity and project

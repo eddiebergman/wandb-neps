@@ -39,6 +39,7 @@ from sweeps.params import HyperParameter
 # DEBUG on W&B agent was too noisy for this demo
 logging.getLogger("wandb.wandb_agent").setLevel(logging.INFO)
 
+STOPPING_LOG_FILE = "stopping.log"
 
 _api: InternalApi | None = None
 
@@ -303,6 +304,8 @@ def custom_step(tuner: _WandbController) -> None:
     to_stop = tuner.stopping()
     if len(to_stop) > 0:
         print("==== Stopping!")
+        with open(STOPPING_LOG_FILE, "a") as f:
+            f.write(f"Scheduled to stop: {to_stop}\n")
         tuner.stop_runs(to_stop)
 
 
